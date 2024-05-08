@@ -570,21 +570,14 @@ namespace hex::plugin::builtin {
         ImGui::SetNextWindowSize(ImVec2(250 * scaling, 0), ImGuiCond_Appearing);
         ImGui::SetNextWindowPos(ImGui::GetWindowPos() + ImGui::GetWindowContentRegionMin() - ImGui::GetStyle().WindowPadding, ImGuiCond_Appearing);
         const auto originalAlpha = ImGui::GetStyle().Alpha;
-        if (ImGuiExt::BeginHoveringPopup("##hex_editor_popup", &open, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoBackground)) {
+        if(m_currPopup != nullptr && !m_currentPopupHover && m_currentPopupDetached) {
+            ImGui::GetStyle().Alpha = ImGui::GetStyle().PopupWindowAlpha;
+        }
+        if (ImGuiExt::BeginHoveringPopup("##hex_editor_popup", &open, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
             if(m_currPopup == nullptr || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
                 ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             } else {
-                ImGuiStyle& style = ImGui::GetStyle();
-                ImVec4 background_color = style.Colors[ImGuiCol_WindowBg];
-                if(!ImGui::IsWindowHovered() && !m_currPopup->isPinned() && !ImGui::GetCurrentWindow()->ViewportOwned) {
-                    style.Alpha = background_color.w = style.PopupWindowAlpha;
-                }
-
-
-                // Explicitly draw the popup's background, since it was disabled with ImGuiWindowFlags_NoBackground for proper transparency
-                ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetWindowPos(), ImGui::GetWindowPos() + ImGui::GetWindowSize(), ImGui::ColorConvertFloat4ToU32(background_color));
-
                 float titleOffset = 7 * scaling;
 
                 const ImVec2 originalCursorPos = ImGui::GetCursorPos();
@@ -611,6 +604,9 @@ namespace hex::plugin::builtin {
                 }
 
                 m_currPopup->draw(this);
+
+                m_currentPopupHover = ImGui::IsWindowHovered();
+                m_currentPopupDetached = !ImGui::GetCurrentWindow()->ViewportOwned;
 
                 ImGui::EndPopup();
             }
