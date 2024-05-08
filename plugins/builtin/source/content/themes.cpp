@@ -262,6 +262,7 @@ namespace hex::plugin::builtin {
                 const static ThemeManager::StyleMap ImGuiStyleMap = {
                     { "alpha",                  { &style.Alpha,                     0.1F,   1.0F,    false } },
                     { "disabled-alpha",         { &style.DisabledAlpha,             0.0F,   1.0F,    false } },
+                    { "popup-alpha",            { &style.PopupWindowAlpha,          0.0F,   1.0F,    false } },
                     { "window-padding",         { &style.WindowPadding,             0.0F,   20.0F,   true  } },
                     { "window-rounding",        { &style.WindowRounding,            0.0F,   12.0F,   true  } },
                     { "window-border-size",     { &style.WindowBorderSize,          0.0F,   1.0F,    true  } },

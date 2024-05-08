@@ -569,11 +569,22 @@ namespace hex::plugin::builtin {
         const float scaling = ImHexApi::System::getGlobalScale();
         ImGui::SetNextWindowSize(ImVec2(250 * scaling, 0), ImGuiCond_Appearing);
         ImGui::SetNextWindowPos(ImGui::GetWindowPos() + ImGui::GetWindowContentRegionMin() - ImGui::GetStyle().WindowPadding, ImGuiCond_Appearing);
-        if (ImGuiExt::BeginHoveringPopup("##hex_editor_popup", &open, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+        const auto originalAlpha = ImGui::GetStyle().Alpha;
+        if (ImGuiExt::BeginHoveringPopup("##hex_editor_popup", &open, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoBackground)) {
             if(m_currPopup == nullptr || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
                 ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             } else {
+                ImGuiStyle& style = ImGui::GetStyle();
+                ImVec4 background_color = style.Colors[ImGuiCol_WindowBg];
+                if(!ImGui::IsWindowHovered() && !m_currPopup->isPinned() && !ImGui::GetCurrentWindow()->ViewportOwned) {
+                    style.Alpha = background_color.w = style.PopupWindowAlpha;
+                }
+
+
+                // Explicitly draw the popup's background, since it was disabled with ImGuiWindowFlags_NoBackground for proper transparency
+                ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetWindowPos(), ImGui::GetWindowPos() + ImGui::GetWindowSize(), ImGui::ColorConvertFloat4ToU32(background_color));
+
                 float titleOffset = 7 * scaling;
 
                 const ImVec2 originalCursorPos = ImGui::GetCursorPos();
@@ -607,6 +618,7 @@ namespace hex::plugin::builtin {
             this->closePopup();
             justOpened = true;
         }
+        ImGui::GetStyle().Alpha = originalAlpha;
 
         // Right click menu
         if (ImGui::IsMouseDown(ImGuiMouseButton_Right) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && !ImGui::IsAnyItemHovered())

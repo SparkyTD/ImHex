@@ -2068,6 +2068,7 @@ struct ImGuiStyle
 {
     float       Alpha;                      // Global alpha applies to everything in Dear ImGui.
     float       DisabledAlpha;              // Additional alpha multiplier applied by BeginDisabled(). Multiply over current value of Alpha.
+    float       PopupWindowAlpha;           // Alpha used by Popup tool windows when the user is not hovering over them
     ImVec2      WindowPadding;              // Padding within a window.
     float       WindowRounding;             // Radius of window corners rounding. Set to 0.0f to have rectangular windows. Large values tend to lead to variety of artifacts and are not recommended.
     float       WindowBorderSize;           // Thickness of border around windows. Generally set to 0.0f or 1.0f. (Other values are not well tested and more CPU/GPU costly).
