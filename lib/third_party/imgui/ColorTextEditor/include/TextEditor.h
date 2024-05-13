@@ -10,8 +10,12 @@
 #include <regex>
 #include "imgui.h"
 
+#include "AutoCompletion.h"
+
 class TextEditor
 {
+    friend class AutoCompletion;
+
 public:
 	enum class PaletteIndex
 	{
@@ -472,6 +476,7 @@ private:
 	std::string mLineBuffer;
 	uint64_t mStartTime;
 	std::vector<std::string> mDefines;
+    AutoCompletion mAutoCompletion;
 
 	float mLastClick;
     bool mShowCursor;

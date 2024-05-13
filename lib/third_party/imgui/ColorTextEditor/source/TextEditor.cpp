@@ -46,6 +46,7 @@ void TextEditor::SetLanguageDefinition(const LanguageDefinition &aLanguageDef) {
         mRegexList.push_back(std::make_pair(std::regex(r.first, std::regex_constants::optimize), r.second));
 
     Colorize();
+    mAutoCompletion.Initialize(this);
 }
 
 void TextEditor::SetPalette(const Palette &aValue) {
@@ -645,6 +646,9 @@ void TextEditor::HandleKeyboardInputs() {
         io.WantCaptureKeyboard = true;
         io.WantTextInput       = true;
 
+        if(!mAutoCompletion.HandleKeyEvent(this, ctrl, alt, shift))
+            return;
+        
         bool handledKeyEvent = true;
 
         if (!IsReadOnly() && ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Z))
@@ -1053,6 +1057,8 @@ void TextEditor::Render() {
                 }
             }
         }
+
+        mAutoCompletion.Render(this, cursorScreenPos);
     }
 
     ImGui::Dummy(ImVec2((longest + 2), mLines.size() * mCharAdvance.y));

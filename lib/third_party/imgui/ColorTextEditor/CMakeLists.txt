@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD 17)
 if (NOT IMHEX_EXTERNAL_PLUGIN_BUILD)
     add_library(imgui_color_text_editor OBJECT
         source/TextEditor.cpp
+            source/AutoCompletion.cpp
+            include/AutoCompletion.h
     )
 
     target_include_directories(imgui_color_text_editor PUBLIC
