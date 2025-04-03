@@ -37,6 +37,7 @@
 #include <content/global_actions.hpp>
 #include <fonts/fonts.hpp>
 #include <hex/helpers/menu_items.hpp>
+#include <pl/core/lexer.hpp>
 
 namespace hex::plugin::builtin {
 
@@ -230,6 +231,7 @@ namespace hex::plugin::builtin {
         this->registerEvents();
         this->registerMenuItems();
         this->registerHandlers();
+        this->registerAutocompleteProviders();
     }
 
     ViewPatternEditor::~ViewPatternEditor() {
@@ -2625,6 +2627,20 @@ namespace hex::plugin::builtin {
             result += "\n```\n\n";
 
             return result;
+        });
+    }
+
+    void ViewPatternEditor::registerAutocompleteProviders() {
+        const auto autocompleteHandler = this->m_textEditor.GetAutocompleteHandler();
+
+        // Provide types in the global context
+        autocompleteHandler->RegisterSuggestionProvider([&](std::vector<TextEditor::Autocompletion>& completions, unsigned int, unsigned int) {
+            const auto &types = m_editorRuntime->getInternals().parser->getTypes();
+            for (auto type : types) {
+                if (type.first.starts_with("builtin::"))
+                    continue;
+                completions.push_back( { .text = type.first } );
+            }
         });
     }
 

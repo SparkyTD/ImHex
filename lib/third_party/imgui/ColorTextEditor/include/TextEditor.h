@@ -323,6 +323,7 @@ public:
     }
 
     class FindReplaceHandler;
+    class AutocompleteHandler;
 
 public:
     void AddClickableText(std::string text) {
@@ -332,6 +333,7 @@ public:
         mClickableText.clear();
     }
     FindReplaceHandler *GetFindReplaceHandler() { return &mFindReplaceHandler; }
+    AutocompleteHandler *GetAutocompleteHandler() { return &mAutocompleteHandler; }
 	int GetTotalLines() const { return (int)mLines.size(); }
 	bool IsOverwrite() const { return mOverwrite; }
     void SetTopMarginChanged(int newMargin) {
@@ -503,6 +505,33 @@ public:
         ImVec2 mFindWindowSize;
     };
     FindReplaceHandler mFindReplaceHandler;
+
+	struct Autocompletion {
+		std::string text;
+	};
+
+	using AutocompletionSuggestionCallback = std::function<void(std::vector<Autocompletion>& completions, unsigned int line, unsigned int column)>;
+
+	class AutocompleteHandler {
+	public:
+		AutocompleteHandler() = default;
+		~AutocompleteHandler() = default;
+
+	private:
+		bool mIsOpen = false;
+		int mSelectionIndex = 0;
+		std::vector<AutocompletionSuggestionCallback> mSuggestionProviderCallbacks;
+		std::vector<Autocompletion> mCurrentSuggestions;
+
+	public:
+		bool HandleKeyEvent(TextEditor* text_editor, bool ctrl, bool alt, bool shift);
+		void RegisterSuggestionProvider(AutocompletionSuggestionCallback callback);
+		void Render(TextEditor* text_editor, const ImVec2 &cursorPosition);
+		void ClosePopup();
+
+	private:
+		void ReloadSuggestions(TextEditor* editor);
+	};
 private:
 	class UndoRecord
 	{
@@ -642,6 +671,8 @@ private:
     bool mUpdateFocus = false;
 
     std::vector<std::string>  mClickableText;
+
+	AutocompleteHandler mAutocompleteHandler;
 
     static const int sCursorBlinkInterval;
     static const int sCursorBlinkOnTime;

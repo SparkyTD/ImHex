@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <print>
 #include <string>
 #include <regex>
 #include <cmath>
@@ -743,6 +744,9 @@ void TextEditor::HandleKeyboardInputs() {
         io.WantCaptureKeyboard = true;
         io.WantTextInput       = true;
 
+        if (!mAutocompleteHandler.HandleKeyEvent(this, ctrl, alt, shift))
+            return;
+
         if (!IsReadOnly() && !ctrl && !shift && !alt && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)))
             EnterCharacter('\n', false);
         else if (!IsReadOnly() && !ctrl && !alt && ImGui::IsKeyPressed(ImGuiKey_Tab))
@@ -1176,6 +1180,9 @@ void TextEditor::RenderText(const char *aTitle, const ImVec2 &lineNumbersStartPo
 
             lineNo = std::floor(lineNo + 1.0F);
         }
+
+        mAutocompleteHandler.Render(this, cursorScreenPos);
+
     }
     if (!mIgnoreImGuiChild)
         ImGui::EndChild();
@@ -2696,6 +2703,116 @@ std::string TextEditor::GetLineText(int line) const {
     return GetText(Coordinates(line, 0),Coordinates(line, lineLength));
 }
 
+bool TextEditor::AutocompleteHandler::HandleKeyEvent(TextEditor *text_editor, bool ctrl, bool alt, bool shift) {
+    // Open popup with Ctrl+Space
+    if (!mIsOpen && ctrl && ImGui::IsKeyPressed(ImGuiKey_Space)) {
+        this->ReloadSuggestions(text_editor);
+        mIsOpen = true;
+        return false;
+    }
+
+    // In the popup is not open, allow TextEditor to handle the keys
+    if (!mIsOpen)
+        return true;
+
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+        if(mSelectionIndex < mCurrentSuggestions.size() - 1)
+            mSelectionIndex++;
+        else
+            mSelectionIndex = 0;
+        return false;
+    }
+
+    // Selection up
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+        if(mSelectionIndex > 0)
+            mSelectionIndex--;
+        else
+            mSelectionIndex = mCurrentSuggestions.size() - 1;
+        return false;
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+        // DoAutoComplete(editor, mCurrentCandidates[mSelectionIndex]);
+        mSelectionIndex = 0;
+        mIsOpen = false;
+        return false;
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        mIsOpen = false;
+        return false;
+    }
+
+    return true;
+}
+
+void TextEditor::AutocompleteHandler::RegisterSuggestionProvider(AutocompletionSuggestionCallback callback) {
+    mSuggestionProviderCallbacks.push_back(callback);
+}
+
+void TextEditor::AutocompleteHandler::ReloadSuggestions(TextEditor* editor) {
+    if (mSuggestionProviderCallbacks.empty())
+        return;
+
+    mSelectionIndex = 0;
+    mCurrentSuggestions.clear();
+
+    for (const auto &callback : mSuggestionProviderCallbacks) {
+        callback(mCurrentSuggestions, editor->mState.mCursorPosition.mLine + 1, editor->mState.mCursorPosition.mColumn + 1);
+    }
+}
+
+void TextEditor::AutocompleteHandler::Render(TextEditor* editor, const ImVec2 &cursorPosition) {
+    if (!mIsOpen)
+        return;
+
+    if (!ImGui::IsWindowFocused()) {
+        mIsOpen = false;
+        return;
+    }
+
+    const auto lineOffsetX = editor->TextDistanceToLineStart(editor->mState.mCursorPosition);
+    auto lineNo = editor->mState.mCursorPosition.mLine;
+    const int visibleLines = 10;
+    const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+
+    ImVec2 lineStartScreenPos = ImVec2(cursorPosition.x, cursorPosition.y + static_cast<float>(lineNo + 1) * editor->mCharAdvance.y);
+    ImVec2 textScreenPos = ImVec2(lineStartScreenPos.x + editor->mTextStart, lineStartScreenPos.y);
+
+    ImGui::SetNextWindowPos(ImVec2(textScreenPos.x + lineOffsetX, textScreenPos.y));
+    ImGui::SetNextWindowSize(ImVec2(200, lineHeight * std::min(visibleLines, int(5 + 1))));
+    if (ImGui::Begin("asd", nullptr, ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar)) {
+        if (!mCurrentSuggestions.empty()) {
+            for (int i = 0; i < mCurrentSuggestions.size(); i++) {
+                bool isSelected = mSelectionIndex == i;
+                if (ImGui::Selectable(mCurrentSuggestions[i].text.c_str(), isSelected)) {
+                    //DoAutoComplete(editor, mCurrentSuggestions[i]);
+                    mIsOpen = false;
+                }
+
+                if (isSelected) {
+                    mSelectionIndex = i;
+                    const float scrollY = ImGui::GetScrollY();
+                    if (lineHeight * i - scrollY < 0) {
+                        ImGui::SetScrollHereY(1.0F / visibleLines);
+                    } else if (lineHeight * i - scrollY >= lineHeight * (visibleLines - 1)) {
+                        ImGui::SetScrollHereY(1.0F / visibleLines * (visibleLines - 1));
+                    }
+                }
+            }
+        } else {
+            ImGui::TextDisabled("No results");
+        }
+
+        ImGui::End();
+    }
+}
+
+void TextEditor::AutocompleteHandler::ClosePopup() {
+    mIsOpen = false;
+}
+
 void TextEditor::ProcessInputs() {
 }
 
@@ -3169,6 +3286,8 @@ void TextEditor::UndoRecord::Redo(TextEditor *aEditor) {
     aEditor->EnsureCursorVisible();
 
 }
+
+
 
 bool TokenizeCStyleString(const char *in_begin, const char *in_end, const char *&out_begin, const char *&out_end) {
     const char *p = in_begin;

@@ -331,6 +331,7 @@ namespace hex::plugin::builtin {
         void registerEvents();
         void registerMenuItems();
         void registerHandlers();
+        void registerAutocompleteProviders();
 
         std::function<void()> m_importPatternFile = [this] {
             auto provider = ImHexApi::Provider::get();
