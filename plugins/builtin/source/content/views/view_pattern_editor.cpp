@@ -25,6 +25,7 @@
 #include <fmt/chrono.h>
 
 #include <popups/popup_question.hpp>
+#include <ranges>
 #include <toasts/toast_notification.hpp>
 
 #include <chrono>
@@ -38,6 +39,11 @@
 #include <fonts/fonts.hpp>
 #include <hex/helpers/menu_items.hpp>
 #include <pl/core/lexer.hpp>
+#include <pl/core/ast/ast_node_array_variable_decl.hpp>
+#include <pl/core/ast/ast_node_compound_statement.hpp>
+#include <pl/core/ast/ast_node_lvalue_assignment.hpp>
+#include <pl/core/ast/ast_node_mathematical_expression.hpp>
+#include <pl/core/ast/ast_node_struct.hpp>
 
 namespace hex::plugin::builtin {
 
@@ -588,6 +594,7 @@ namespace hex::plugin::builtin {
             }
 
             if (m_hasUnevaluatedChanges && m_runningEvaluators == 0 && m_runningParsers == 0) {
+                m_textEditor.GetAutocompleteHandler()->SetIsDataAvailable(false);
                 if ((std::chrono::steady_clock::now() - m_lastEditorChangeTime) > std::chrono::seconds(1LL)) {
 
                     auto code = m_textEditor.GetText();
@@ -1880,6 +1887,7 @@ namespace hex::plugin::builtin {
         }
 
         m_runningParsers -= 1;
+        m_textEditor.GetAutocompleteHandler()->SetIsDataAvailable(true);
     }
 
     void ViewPatternEditor::evaluatePattern(const std::string &code, prv::Provider *provider) {
@@ -2630,16 +2638,242 @@ namespace hex::plugin::builtin {
         });
     }
 
+    static pl::core::ast::ASTNode* findLastDeclNodeUntil(pl::core::ast::ASTNode* root, unsigned int line, unsigned int column, const std::string& fieldName, pl::core::ast::ASTNode** lastDecl) {
+        const auto& location = root->getLocation();
+        if (location.line > line || (location.line == line && location.column > column)) {
+            return root;
+        }
+
+        if (const auto &typeDecl = dynamic_cast<pl::core::ast::ASTNodeTypeDecl*>(root)) {
+            if (const auto foundNode = findLastDeclNodeUntil(typeDecl->getType().get(), line, column, fieldName, lastDecl))
+                return foundNode;
+        }
+
+        if (const auto &structDecl = dynamic_cast<pl::core::ast::ASTNodeStruct*>(root)) {
+            for (const auto &ast_node : structDecl->getMembers()) {
+                if (const auto foundNode = findLastDeclNodeUntil(ast_node.get(), line, column, fieldName, lastDecl))
+                    return foundNode;
+            }
+        }
+
+        if (const auto &variableDecl = dynamic_cast<pl::core::ast::ASTNodeVariableDecl*>(root)) {
+            if (variableDecl->getName() == fieldName) {
+                *lastDecl = variableDecl;
+            }
+        }
+
+        if (const auto &arrayVariableDecl = dynamic_cast<pl::core::ast::ASTNodeArrayVariableDecl*>(root)) {
+            if (arrayVariableDecl->getName() == fieldName) {
+                *lastDecl = arrayVariableDecl;
+            }
+        }
+
+        return nullptr;
+    }
+
+    static bool traverseAst(pl::core::ast::ASTNode* root, std::function<bool(pl::core::ast::ASTNode*)> callback) {
+        if (const auto &typeDecl = dynamic_cast<pl::core::ast::ASTNodeTypeDecl*>(root)) {
+            if (!traverseAst(typeDecl->getType().get(), callback))
+                return false;
+        } else if (const auto &structDecl = dynamic_cast<pl::core::ast::ASTNodeStruct*>(root)) {
+            for (const auto &ast_node : structDecl->getMembers()) {
+                if (!traverseAst(ast_node.get(), callback))
+                    return false;
+            }
+        } /*else if (const auto &varDecl = dynamic_cast<pl::core::ast::ASTNodeVariableDecl*>(root)) {
+            if (!traverseAst(varDecl->getType().get(), callback))
+                return false;
+        }*/ else if (const auto &compoundStatement = dynamic_cast<pl::core::ast::ASTNodeCompoundStatement*>(root)) {
+            for (const auto & statement : compoundStatement->getStatements()) {
+                if (!traverseAst(statement.get(), callback))
+                    return false;
+            }
+        } else if (const auto &arrayVarDecl = dynamic_cast<pl::core::ast::ASTNodeArrayVariableDecl*>(root)) {
+            if (!traverseAst(arrayVarDecl->getSize().get(), callback))
+                return false;
+        } else if (const auto &rvalue = dynamic_cast<pl::core::ast::ASTNodeRValue*>(root)) {
+            for (const auto & part : rvalue->getPath()) {
+                if (std::holds_alternative<std::unique_ptr<pl::core::ast::ASTNode>>(part)) {
+                    const auto &partNode = std::get<std::unique_ptr<pl::core::ast::ASTNode>>(part);
+                    if (!traverseAst(partNode.get(), callback))
+                        return false;
+                }
+            }
+        } else if (const auto &lvalueAssignment = dynamic_cast<pl::core::ast::ASTNodeLValueAssignment*>(root)) {
+            if (!traverseAst(lvalueAssignment->getRValue().get(), callback))
+                return false;
+        } else if (const auto &mathExpression = dynamic_cast<pl::core::ast::ASTNodeMathematicalExpression*>(root)) {
+            if (!traverseAst(mathExpression->getLeftOperand().get(), callback))
+                return false;
+            if (!traverseAst(mathExpression->getRightOperand().get(), callback))
+                return false;
+        } else if (dynamic_cast<pl::core::ast::ASTNodeBuiltinType*>(root)) {
+            // skip
+        } else if (dynamic_cast<pl::core::ast::ASTNodeLiteral*>(root)) {
+            // skip
+        }
+
+        return callback(root);
+    }
+
     void ViewPatternEditor::registerAutocompleteProviders() {
         const auto autocompleteHandler = this->m_textEditor.GetAutocompleteHandler();
 
         // Provide types in the global context
-        autocompleteHandler->RegisterSuggestionProvider([&](std::vector<TextEditor::Autocompletion>& completions, unsigned int, unsigned int) {
+        autocompleteHandler->RegisterSuggestionProvider([&](std::vector<TextEditor::Autocompletion>& completions, TextEditor::AutocompletionContext context) {
+            const auto &tokens = m_editorRuntime->getInternals().preprocessor->getResult();
+            int lastTokenIndex = -1;
+            for (const auto & token : tokens) {
+                if (token.location.line > context.line || (token.location.line == context.line && token.location.column >= context.column)) {
+                    break;
+                }
+                if (lastTokenIndex == -1)
+                    lastTokenIndex = 0;
+                lastTokenIndex++;
+            }
+
+            if (lastTokenIndex >= 1) {
+                const auto& previousToken = tokens.at(lastTokenIndex - 1);
+                if (!std::holds_alternative<pl::core::Token::Separator>(previousToken.value))
+                    return;
+
+                if (std::get<pl::core::Token::Separator>(previousToken.value) == pl::core::Token::Separator::Dot)
+                    return;
+            }
+
             const auto &types = m_editorRuntime->getInternals().parser->getTypes();
-            for (auto type : types) {
-                if (type.first.starts_with("builtin::"))
+            for (const auto &type: types | std::views::keys) {
+                if (type.starts_with("builtin::"))
                     continue;
-                completions.push_back( { .text = type.first } );
+                completions.push_back( { .text = type } );
+            }
+        });
+
+        // Provide field members after '.'
+        autocompleteHandler->RegisterSuggestionProvider([&](std::vector<TextEditor::Autocompletion>& completions, TextEditor::AutocompletionContext context) {
+            const auto &tokens = m_editorRuntime->getInternals().preprocessor->getResult();
+            int lastTokenIndex = -1;
+            for (const auto & token : tokens) {
+                if (token.location.line > context.line || (token.location.line == context.line && token.location.column >= context.column)) {
+                    break;
+                }
+                if (lastTokenIndex == -1)
+                    lastTokenIndex = 0;
+                lastTokenIndex++;
+            }
+
+            if (lastTokenIndex < 2)
+                return;
+
+            std::stack<pl::core::Token::Identifier> identifierStack;
+            std::string partialIdentifier("");
+            int prevToken = lastTokenIndex - 1;
+            bool dotSeparator = false;
+            while (prevToken > 0) {
+                const auto& token = tokens[prevToken];
+                if (!dotSeparator && std::holds_alternative<pl::core::Token::Separator>(token.value)) {
+                    if (std::get<pl::core::Token::Separator>(token.value) == pl::core::Token::Separator::Dot) {
+                        dotSeparator = true;
+                    } else {
+                        break;
+                    }
+                } else if (std::holds_alternative<pl::core::Token::Identifier>(token.value)) {
+                    const auto identifier = std::get<pl::core::Token::Identifier>(token.value);
+                    if (prevToken == lastTokenIndex - 1) {
+                        printf("Started on identifier [l=%d; c=%d], NOT putting '%s' on stack\n", token.location.line, token.location.column, identifier.get().c_str());
+                        partialIdentifier = identifier.get();
+                    } else {
+                        identifierStack.push(identifier);
+                        printf("Pushing onto stack: '%s'\n", identifier.get().c_str());
+                    }
+                    dotSeparator = false;
+                } else {
+                    break;
+                }
+
+                prevToken--;
+            }
+
+            if (identifierStack.empty())
+                return;
+
+            std::shared_ptr<pl::core::ast::ASTNodeTypeDecl> topFieldType = nullptr;
+            while (!identifierStack.empty()) {
+                const auto& lastIdentifier = identifierStack.top();
+                identifierStack.pop();
+
+                if (topFieldType == nullptr) {
+                    pl::core::ast::ASTNodeVariableDecl* lastVariableDecl = nullptr;
+                    for (const auto & ast_node : m_editorRuntime->getAST()) {
+                        traverseAst(ast_node.get(), [&](pl::core::ast::ASTNode* node) {
+                            if (node == nullptr)
+                                return true;
+
+                            if (dynamic_cast<pl::core::ast::ASTNodeLiteral*>(node))
+                                return true;
+
+                            if (const auto variableDecl = dynamic_cast<pl::core::ast::ASTNodeVariableDecl*>(node)) {
+                                if (variableDecl->getName() == lastIdentifier.get())
+                                    lastVariableDecl = variableDecl;
+                            }
+
+                            const auto& location = node->getLocation();
+                            if (location.line > context.line || (location.line == context.line && location.column >= context.column)) {
+                                return false;
+                            }
+                            return true;
+                        });
+                    }
+
+                    if (lastVariableDecl == nullptr)
+                        return;
+
+                    topFieldType = lastVariableDecl->getType();
+                    if (const auto& subType = std::dynamic_pointer_cast<pl::core::ast::ASTNodeTypeDecl>(topFieldType->getType()))
+                        topFieldType = subType;
+                } else {
+                    if (const auto& structDecl = std::dynamic_pointer_cast<pl::core::ast::ASTNodeStruct>(topFieldType->getType())) {
+                        topFieldType = nullptr;
+                        for (const auto& memberNode : structDecl->getMembers()) {
+                            if (const auto& member = std::dynamic_pointer_cast<pl::core::ast::ASTNodeVariableDecl>(memberNode)) {
+                                if (member->getName() == lastIdentifier.get()) {
+                                    topFieldType = member->getType();
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (topFieldType == nullptr)
+                            return;
+
+                        if (const auto& subType = std::dynamic_pointer_cast<pl::core::ast::ASTNodeTypeDecl>(topFieldType->getType()))
+                            topFieldType = subType;
+                    } else {
+                        return;
+                    }
+                }
+            }
+
+            try {
+                if (topFieldType == nullptr || topFieldType->getType() == nullptr)
+                    return;
+            } catch (...) {
+                return;
+            }
+
+            if (const auto& structDecl = std::dynamic_pointer_cast<pl::core::ast::ASTNodeStruct>(topFieldType->getType())) {
+                for (const auto &memberNode : structDecl->getMembers()) {
+                    traverseAst(memberNode.get(), [&](pl::core::ast::ASTNode* node) {
+                        if (const auto& varDecl = dynamic_cast<pl::core::ast::ASTNodeVariableDecl*>(node)) {
+                            if (varDecl->getName().starts_with(partialIdentifier))
+                                completions.push_back( { .text = varDecl->getName() } );
+                        } else if (const auto& arrayDecl = dynamic_cast<pl::core::ast::ASTNodeArrayVariableDecl*>(node)) {
+                            if (arrayDecl->getName().starts_with(partialIdentifier))
+                                completions.push_back( { .text = arrayDecl->getName() } );
+                        }
+                        return true;
+                    });
+                }
             }
         });
     }

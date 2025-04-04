@@ -510,27 +510,44 @@ public:
 		std::string text;
 	};
 
-	using AutocompletionSuggestionCallback = std::function<void(std::vector<Autocompletion>& completions, unsigned int line, unsigned int column)>;
+	struct AutocompletionContext {
+		unsigned int line;
+		unsigned int column;
+		std::string currentWord;
+		unsigned int caretWordIndex;
+
+		Coordinates currentWordStart;
+		Coordinates currentWordEnd;
+	};
+
+	using AutocompletionSuggestionCallback = std::function<void(std::vector<Autocompletion>& completions, AutocompletionContext context)>;
 
 	class AutocompleteHandler {
 	public:
-		AutocompleteHandler() = default;
+		AutocompleteHandler(TextEditor* editor) : editor(editor) {};
 		~AutocompleteHandler() = default;
 
 	private:
+		TextEditor* editor;
+		bool mIsDataAvailable = true;
+		bool mLastIsDataAvailable = true;
 		bool mIsOpen = false;
 		int mSelectionIndex = 0;
+		AutocompletionContext lastContext{};
 		std::vector<AutocompletionSuggestionCallback> mSuggestionProviderCallbacks;
 		std::vector<Autocompletion> mCurrentSuggestions;
 
 	public:
-		bool HandleKeyEvent(TextEditor* text_editor, bool ctrl, bool alt, bool shift);
+		void SetIsDataAvailable(bool isDataAvailable);
+		bool HandleKeyEvent();
 		void RegisterSuggestionProvider(AutocompletionSuggestionCallback callback);
-		void Render(TextEditor* text_editor, const ImVec2 &cursorPosition);
+		void Render(const ImVec2 &cursorPosition);
+		void DoAutocomplete();
 		void ClosePopup();
+		bool IsPopupOpen();
 
 	private:
-		void ReloadSuggestions(TextEditor* editor);
+		void ReloadSuggestions();
 	};
 private:
 	class UndoRecord
